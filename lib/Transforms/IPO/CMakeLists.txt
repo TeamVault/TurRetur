@@ -29,6 +29,7 @@ add_llvm_library(LLVMipo
   SafeDispatchReturnAddressPass.cpp
   SafeDispatchReturnRange.cpp
   SafeDispatchUpdateIndices.cpp
+  SafeDispatchCleanup.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms

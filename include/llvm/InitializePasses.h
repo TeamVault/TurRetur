@@ -321,6 +321,8 @@ void initializeSDMoveBasicBlocksPass(PassRegistry&);
 void initializeSDSubstModulePass(PassRegistry&);
 
 //TODO MATT: write docs
+void initializeSDCleanupPass(PassRegistry&);
+
 //this pass is used to insert the return address checks
 void initializeSDReturnAddressPass(PassRegistry&);
 

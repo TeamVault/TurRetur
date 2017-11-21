@@ -730,7 +730,10 @@ private:
 
 char SDReturnAddress::ID = 0;
 
-INITIALIZE_PASS(SDReturnAddress, "sdRetAdd", "Insert return intrinsic.", false, false)
+INITIALIZE_PASS_BEGIN(SDReturnAddress, "sdRetAdd", "Insert return intrinsic.", false, false)
+INITIALIZE_PASS_DEPENDENCY(SDBuildCHA)
+INITIALIZE_PASS_DEPENDENCY(SDReturnRange)
+INITIALIZE_PASS_END(SDReturnAddress, "sdRetAdd", "Insert return intrinsic.", false, false)
 
 ModulePass *llvm::createSDReturnAddressPass() {
   return new SDReturnAddress();

@@ -171,14 +171,14 @@ void SDReturnRange::processVirtualCallSites(Module &M) {
     // get the intrinsic call instruction
     CallInst *IntrinsicCall = dyn_cast<CallInst>(U.getUser());
     assert(IntrinsicCall && "Intrinsic was not wrapped in a CallInst?");
-
-    // Find the CallSite that is associated with the intrinsic call.
     User *User = *(IntrinsicCall->users().begin());
-    for (int i = 0; i < 3; ++i) {
+    CallSite *VCall = nullptr;
+    for (int i = 0; i < 4; ++i) {
       // User was not found, this should not happen...
-      if (User == nullptr)
+      VCall = new CallSite(User);
+      if (VCall->getInstruction()) {
         break;
-      errs() << User << "\n";
+      }
 
       for (auto *NextUser : User->users()) {
         User = NextUser;
@@ -186,10 +186,9 @@ void SDReturnRange::processVirtualCallSites(Module &M) {
       }
     }
 
-    CallSite CallSite(User);
-    if (CallSite.getInstruction()) {
+    if (VCall->getInstruction()) {
       // valid CallSite
-      addVirtualCallSite(IntrinsicCall, CallSite, M);
+      addVirtualCallSite(IntrinsicCall, *VCall, M);
     } else {
       sdLog::log() << "\n";
       sdLog::warn() << "CallSite for intrinsic was not found.\n";
@@ -383,7 +382,9 @@ const DebugLoc* SDReturnRange::getOrCreateDebugLoc(CallSite CallSite, Module &M)
 
 char SDReturnRange::ID = 0;
 
-INITIALIZE_PASS(SDReturnRange, "sdRetRange", "Build return ranges", false, false)
+INITIALIZE_PASS_BEGIN(SDReturnRange, "sdRetRange", "Build return ranges", false, false)
+INITIALIZE_PASS_DEPENDENCY(SDBuildCHA)
+INITIALIZE_PASS_END(SDReturnRange, "sdRetRange", "Build return ranges", false, false)
 
 ModulePass *llvm::createSDReturnRangePass() {
   return new SDReturnRange();

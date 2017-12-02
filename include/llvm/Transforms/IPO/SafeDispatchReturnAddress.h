@@ -28,7 +28,7 @@ class SDReturnAddress : public ModulePass {
 public:
   static char ID;
 
-  SDReturnAddress() : ModulePass(ID) {
+  SDReturnAddress() : ModulePass(ID), Encoder(0x7FFFE) {
     sdLog::stream() << "initializing SDReturnAddress pass ...\n";
     initializeSDReturnAddressPass(*PassRegistry::getPassRegistry());
   }
@@ -43,9 +43,7 @@ public:
 
     // get analysis results
     CHA = &getAnalysis<SDBuildCHA>();
-    ReturnRange = &getAnalysis<SDReturnRange>();
-    StaticFunctions = ReturnRange->getStaticCallees();
-    FunctionTypeIDMap = ReturnRange->getFunctionTypeIDMap();
+    StaticFunctions = getAnalysis<SDReturnRange>().getStaticCallees();
 
     functionID = CHA->getMaxID() + 1;
 
@@ -131,6 +129,10 @@ public:
     AU.setPreservesAll();
   }
 
+  SDEncoder getEncoder() {
+    return Encoder;
+  }
+
 private:
   enum ProcessingInfoFlags {
     Static, Virtual, NoCaller, NoReturn, BlackListed
@@ -151,10 +153,9 @@ private:
   };
 
   SDBuildCHA *CHA = nullptr;
-  SDReturnRange *ReturnRange = nullptr;
+  SDEncoder Encoder;
 
   const StringSet<> *StaticFunctions{};
-  const std::map<uint64_t, uint32_t> *FunctionTypeIDMap{};
 
   std::map<std::string, uint64_t> FunctionIDMap{};
   uint64_t functionID{};
@@ -172,8 +173,6 @@ private:
   int processVirtualFunction(Function &F, ProcessingInfo &Info);
 
   int generateRangeChecks(Function &F, std::vector<uint64_t> IDs, ProcessingInfo &Info);
-
-  uint32_t encodeFunction(FunctionType* FuncTy);
 
   int generateCompareChecks(Function &F, uint64_t ID, ProcessingInfo &Info);
 

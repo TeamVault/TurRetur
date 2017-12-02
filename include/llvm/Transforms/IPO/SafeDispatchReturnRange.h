@@ -17,6 +17,7 @@
 #define LLVM_SAFEDISPATCHRETURNRANGE_H
 
 #include "llvm/ADT/StringSet.h"
+#include "llvm/Transforms/IPO/SDEncode.h"
 #include "llvm/Transforms/IPO/SafeDispatchCHA.h"
 #include "llvm/Transforms/IPO/SafeDispatchLogStream.h"
 
@@ -24,18 +25,11 @@ namespace llvm {
 
 struct SDReturnRange : public ModulePass {
 public:
-  static char ID; // Pass identification, replacement for typeid
-  static const std::string CONSTRUCTION_VTABLE_DEMANGLE_PREFIX;
-  static const std::string VTABLE_DEMANGLE_PREFIX;
+  static char ID;
 
-  SDReturnRange() : ModulePass(ID),
-                    CallSiteDebugLocsVirtual(),
-                    CallSiteDebugLocsStatic(),
-                    CalledFunctions() {
+  SDReturnRange() : ModulePass(ID), Encoder(0x7FFFE) {
     sdLog::stream() << "initializing SDReturnRange pass\n";
     initializeSDReturnRangePass(*PassRegistry::getPassRegistry());
-
-    CurrentFunctionTypeID = 0x7FFFE;
     pseudoDebugLoc = 1;
   }
 
@@ -54,12 +48,9 @@ public:
     return &CalledFunctions;
   }
 
-  const std::map<uint64_t, uint32_t> *getFunctionTypeIDMap() {
-    return &FunctionTypeIDMap;
-  };
-
 private:
-  SDBuildCHA *CHA;
+  SDBuildCHA *CHA = nullptr;
+  SDEncoder Encoder;
 
   /// Information about the virtual CallSites that are being found by this pass.
   std::vector<std::string> CallSiteDebugLocsVirtual;
@@ -71,11 +62,7 @@ private:
   StringSet<> CalledFunctions;
 
   /// Set of all virtual CallSites.
-  std::set<CallSite> VirtualCallSites;
-
-  std::map<uint64_t, uint32_t> FunctionTypeIDMap;
-
-  uint32_t CurrentFunctionTypeID;
+  std::set<CallSite> VirtualCallSites {};
 
   /// Current ID for the DebugLoc hack.
   uint64_t pseudoDebugLoc;
@@ -97,8 +84,6 @@ private:
 
   /// Get or create a DebugLoc for CallSite (created by using pseudoDebugLoc).
   const DebugLoc* getOrCreateDebugLoc(CallSite CallSite, Module &M);
-
-  uint32_t encodeFunction(FunctionType* FuncTy);
 };
 
 } // End llvm namespace

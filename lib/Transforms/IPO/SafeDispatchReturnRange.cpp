@@ -56,89 +56,12 @@ static bool isBlackListed(const Function &F) {
   return (F.getName().startswith("llvm.") || F.getName().startswith("__")  || F.getName() == "_Znwm");
 }
 
-static uint16_t encodeType(Type* T, bool recurse = true) {
-  uint16_t TypeEncoded;
-  switch (T->getTypeID()) {
-    case Type::TypeID::VoidTyID:
-      TypeEncoded = 1;
-      break;
-
-    case Type::TypeID::IntegerTyID: {
-      auto Bits = cast<IntegerType>(T)->getBitWidth();
-      if (Bits <= 1) {
-        TypeEncoded = 2;
-      } else if (Bits <= 8) {
-        TypeEncoded = 3;
-      } else if (Bits <= 16) {
-        TypeEncoded = 4;
-      } else if (Bits <= 32) {
-        TypeEncoded = 5;
-      } else {
-        TypeEncoded = 6;
-      }
-    }
-      break;
-
-    case Type::TypeID::HalfTyID:
-      TypeEncoded = 7;
-      break;
-    case Type::TypeID::FloatTyID:
-      TypeEncoded = 8;
-      break;
-    case Type::TypeID::DoubleTyID:
-      TypeEncoded = 9;
-      break;
-
-    case Type::TypeID::X86_FP80TyID:
-    case Type::TypeID::FP128TyID:
-    case Type::TypeID::PPC_FP128TyID:
-      TypeEncoded = 10;
-      break;
-
-    case Type::TypeID::PointerTyID:
-      if (recurse) {
-        TypeEncoded = uint16_t(16) + encodeType(dyn_cast<PointerType>(T)->getElementType(), false);
-      } else {
-        TypeEncoded = 11;
-      }
-      break;
-    case Type::TypeID::StructTyID:
-      TypeEncoded = 12;
-      break;
-    case Type::TypeID::ArrayTyID:
-      TypeEncoded = 13;
-      break;
-    default:
-      TypeEncoded = 14;
-      break;
-  }
-  assert(TypeEncoded < 32);
-  return TypeEncoded;
-}
-
-uint32_t SDReturnRange::encodeFunction(FunctionType* FuncTy) {
-  uint64_t Encoding = 32;
-  if (FuncTy->getNumParams() < 8) {
-    Encoding = encodeType(FuncTy->getReturnType());
-    for (auto *Param : FuncTy->params()) {
-      Encoding = encodeType(Param) + Encoding * 32;
-    }
-  }
-
-  auto Entry = FunctionTypeIDMap.find(Encoding);
-  if (Entry == FunctionTypeIDMap.end()) {
-    sdLog::stream() << "New FunctionTypeID " << CurrentFunctionTypeID << ": " << *FuncTy << "\n";
-    FunctionTypeIDMap[Encoding] = CurrentFunctionTypeID--;
-    return FunctionTypeIDMap[Encoding];
-  }
-  return Entry->second;
-}
-
 bool SDReturnRange::runOnModule(Module &M) {
   sdLog::blankLine();
   sdLog::stream() << "P7a. Started running the SDReturnRange pass ..." << sdLog::newLine << "\n";
 
   CHA = &getAnalysis<SDBuildCHA>();
+  //Encoder = getAnalysis<SDReturnAddress>().getEncoder();
 
   // Build the virtual ID ranges.
   CHA->buildFunctionInfo();
@@ -186,7 +109,7 @@ void SDReturnRange::processVirtualCallSites(Module &M) {
       }
     }
 
-    if (VCall->getInstruction()) {
+    if (VCall != nullptr && VCall->getInstruction()) {
       // valid CallSite
       addVirtualCallSite(IntrinsicCall, *VCall, M);
     } else {
@@ -256,7 +179,7 @@ void SDReturnRange::addStaticCallSite(CallSite CallSite, Module &M) {
     Type *Ty = CallSite.getCalledValue()->getType();
     if (auto *PointerTy = dyn_cast<PointerType>(Ty)) {
       if (auto *FuncTy = dyn_cast<FunctionType>(PointerTy->getElementType())) {
-        uint64_t FunctionTypeID = encodeFunction(FuncTy);
+        uint64_t FunctionTypeID = Encoder.getTypeID(FuncTy);
         FunctionName = "__INDIRECT__" + std::to_string(FunctionTypeID);
       }
     }

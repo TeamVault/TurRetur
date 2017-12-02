@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/Transforms/IPO/SDEncode.h"
 #include "llvm/Transforms/IPO/SafeDispatchReturnAddress.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <fstream>
@@ -51,7 +52,6 @@ static void createPrintCall(const std::string &FormatString,
   Function *PrintProto = createPrintfPrototype(M);
   builder.CreateCall(PrintProto, ArgsRef);
 }
-
 
 int SDReturnAddress::processFunction(Function &F, ProcessingInfo &Info) {
   if (isBlackListedFunction(F)) {
@@ -251,7 +251,7 @@ int SDReturnAddress::generateRangeChecks(Function &F, std::vector<uint64_t> IDs,
     if (F.hasAddressTaken()) {
       // Handle indirect call case
       builder.SetInsertPoint(CurrentBlock);
-      uint32_t FunctionTypeID = encodeFunction(F.getFunctionType());
+      uint32_t FunctionTypeID = Encoder.getTypeID(F.getFunctionType());
       if (FunctionTypeID != 0) {
         ConstantInt *indirectMagicNumber = builder.getInt32(FunctionTypeID);
         auto checkIndirectCall = builder.CreateICmpEQ(minID, indirectMagicNumber);
@@ -288,82 +288,6 @@ int SDReturnAddress::generateRangeChecks(Function &F, std::vector<uint64_t> IDs,
     count++;
   }
   return count;
-}
-
-static uint16_t encodeType(Type *T, bool recurse = true) {
-  uint16_t TypeEncoded;
-  switch (T->getTypeID()) {
-    case Type::TypeID::VoidTyID:
-      TypeEncoded = 1;
-      break;
-
-    case Type::TypeID::IntegerTyID: {
-      auto Bits = cast<IntegerType>(T)->getBitWidth();
-      if (Bits <= 1) {
-        TypeEncoded = 2;
-      } else if (Bits <= 8) {
-        TypeEncoded = 3;
-      } else if (Bits <= 16) {
-        TypeEncoded = 4;
-      } else if (Bits <= 32) {
-        TypeEncoded = 5;
-      } else {
-        TypeEncoded = 6;
-      }
-    }
-      break;
-
-    case Type::TypeID::HalfTyID:
-      TypeEncoded = 7;
-      break;
-    case Type::TypeID::FloatTyID:
-      TypeEncoded = 8;
-      break;
-    case Type::TypeID::DoubleTyID:
-      TypeEncoded = 9;
-      break;
-
-    case Type::TypeID::X86_FP80TyID:
-    case Type::TypeID::FP128TyID:
-    case Type::TypeID::PPC_FP128TyID:
-      TypeEncoded = 10;
-      break;
-
-    case Type::TypeID::PointerTyID:
-      if (recurse) {
-        TypeEncoded = uint16_t(16) + encodeType(dyn_cast<PointerType>(T)->getElementType(), false);
-      } else {
-        TypeEncoded = 11;
-      }
-      break;
-    case Type::TypeID::StructTyID:
-      TypeEncoded = 12;
-      break;
-    case Type::TypeID::ArrayTyID:
-      TypeEncoded = 13;
-      break;
-    default:
-      TypeEncoded = 14;
-      break;
-  }
-  assert(TypeEncoded < 32);
-  return TypeEncoded;
-}
-
-uint32_t SDReturnAddress::encodeFunction(FunctionType *FuncTy) {
-  uint64_t Encoding = 31;
-  if (FuncTy->getNumParams() < 8) {
-    Encoding = encodeType(FuncTy->getReturnType());
-    for (auto *Param : FuncTy->params()) {
-      Encoding = encodeType(Param) + Encoding * 32;
-    }
-  }
-
-  auto Entry = FunctionTypeIDMap->find(Encoding);
-  if (Entry == FunctionTypeIDMap->end()) {
-    return 0;
-  }
-  return Entry->second;
 }
 
 int SDReturnAddress::generateCompareChecks(Function &F, uint64_t ID, ProcessingInfo &Info) {
@@ -447,7 +371,7 @@ int SDReturnAddress::generateCompareChecks(Function &F, uint64_t ID, ProcessingI
 
     if (F.hasAddressTaken()) {
       // Handle indirect call case
-      uint32_t FunctionTypeID = encodeFunction(F.getFunctionType());
+      uint32_t FunctionTypeID = Encoder.getTypeID(F.getFunctionType());
       if (FunctionTypeID != 0) {
         ConstantInt *indirectMagicNumber = builder.getInt32(FunctionTypeID);
         auto checkIndirectCall = builder.CreateICmpEQ(minID, indirectMagicNumber);
@@ -572,7 +496,6 @@ void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
   }
   Outfile << "##\n";
 }
-
 
 void SDReturnAddress::storeFunctionIDMap(Module &M) {
   sdLog::stream() << "Store all function IDs for module: " << M.getName() << "\n";

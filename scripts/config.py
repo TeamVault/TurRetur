@@ -202,7 +202,7 @@ def read_config():
     "ENABLE_COMPILER_OPT" : ENABLE_COMPILER_OPT,
     "GOLD_PLUGIN"         : LLVM_BUILD_OUTPUT + "/lib/LLVMgold.so",
     "LLVM_BUILD_BIN"      : LLVM_BUILD_OUTPUT + "/bin",
-  })
+    })
 
   clang_config.update({
     "CC"              : clang_config["LLVM_BUILD_BIN"] + "/clang",
@@ -217,7 +217,7 @@ def read_config():
     "AR"              : clang_config["LLVM_SCRIPTS_DIR"] + "/ar",
     "NM"              : clang_config["LLVM_SCRIPTS_DIR"] + "/nm",
     "RANLIB"          : clang_config["LLVM_SCRIPTS_DIR"] + "/ranlib",
-  })
+    })
 
   for (k,v) in sd_config.items():
     clang_config[k] = v
@@ -241,8 +241,8 @@ if __name__ == '__main__':
 
     if key == "ENABLE_SD":
       print d["SD_ENABLE_INTERLEAVING"] or \
-            d["SD_ENABLE_CHECKS"] or \
-            d["SD_ENABLE_ORDERING"]
+              d["SD_ENABLE_CHECKS"] or \
+              d["SD_ENABLE_ORDERING"]
       sys.exit(0)
 
     assert key in d

@@ -318,28 +318,22 @@ static std::vector<SD_VtableMD> sd_generateSubvtableInfo(clang::CodeGen::CodeGen
     {
       auto component = VTLayout->vtable_component_begin()[end];
       auto kind = component.getKind();
+      const clang::CXXMethodDecl *MD;
 
-      if (kind == clang::VTableComponent::CK_FunctionPointer ||
-          kind == clang::VTableComponent::CK_UnusedFunctionPointer) {
-        const clang::CXXMethodDecl *MD = component.getFunctionDecl();
-        if (!clang::isa<clang::CXXConstructorDecl>(MD) && !clang::isa<clang::CXXDestructorDecl>(MD)) {
-          std::string functionName = sd_getFunctionName(ABI, MD);
-          functions.insert(std::pair<std::string, uint64_t>(sd_getFunctionName(ABI, MD), end - start));
-        }
-      }
-
-      if (kind == clang::VTableComponent::CK_FunctionPointer ||
-          kind == clang::VTableComponent::CK_UnusedFunctionPointer ||
-          kind == clang::VTableComponent::CK_CompleteDtorPointer ||
-          kind == clang::VTableComponent::CK_DeletingDtorPointer)
-      {
-        //count the number of the end
-        end++;
-      }
-      else
-      {
+      if (kind == clang::VTableComponent::CK_FunctionPointer) {
+        MD = component.getFunctionDecl();
+      } else if (kind == clang::VTableComponent::CK_UnusedFunctionPointer) {
+        MD = component.getUnusedFunctionDecl();
+      } else if (kind == clang::VTableComponent::CK_CompleteDtorPointer ||
+                 kind == clang::VTableComponent::CK_DeletingDtorPointer) {
+        MD = component.getDestructorDecl();
+      } else {
         break;
       }
+      std::string functionName = sd_getFunctionName(ABI, MD);
+      functions.insert(std::pair<std::string, uint64_t>(sd_getFunctionName(ABI, MD), end - start));
+      //count the number of the end
+      end++;
     }
 
     for (auto it : addrPtMap[addrPt])

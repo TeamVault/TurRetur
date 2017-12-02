@@ -109,6 +109,8 @@ namespace llvm {
     function_range_map_t functionRangeMap;
     function_id_map_t functionIDMap;
     uint64_t  currentID;
+
+    std::map<func_name_t, func_name_t> functionParentMap;
     
     /**
      * These functions and variables used to deal with duplication
@@ -180,7 +182,7 @@ namespace llvm {
      */
     std::vector<nmd_t> static extractMetadata(NamedMDNode* md);
 
-    range_t buildFunctionInfoForFunction(FunctionEntry &function);
+    range_t buildFunctionInfoForFunction(FunctionEntry &function, std::string rootFunctionName);
 
     void topoSortHelper(vtbl_name_t node, std::deque<vtbl_name_t> &ordered,
                         std::set<vtbl_name_t> &visited, std::set<vtbl_name_t> &tempMarked);
@@ -223,14 +225,14 @@ namespace llvm {
       buildClouds(M);
 
       //Paul: print the clouds in tmp/dot; can be viewed with graphviz
-      printClouds("");
+      //printClouds("");
 
       //for each root node it counts the number of children 
       //this value is stored when calculating the range width 
       for (auto rootName : roots) {
         calculateChildrenCounts(vtbl_t(rootName, 0));
       }
-      
+
       //Paul: do a verification of the clouds.
       //Check that the cloud map is not empty
       //for each of the root nodes 
@@ -294,6 +296,10 @@ namespace llvm {
     //Paul: the v table is checked if it is contained in the undefinedVTables set 
     bool isUndefined(const vtbl_name_t &vtbl) {
       return undefinedVTables.find(vtbl) != undefinedVTables.end();
+    }
+
+    bool isDefined(const vtbl_name_t &vtbl) {
+      return !isUndefined(vtbl); //Paul: notice this calls the above method
     }
 
     bool isUndefined(const vtbl_t &vtbl) {
@@ -389,6 +395,10 @@ namespace llvm {
       return subObjNameMap[name][ind];
     }
 
+    const std::vector<vtbl_name_t> getSubVTables(const vtbl_name_t &name) {
+      return subObjNameMap[name];
+    }
+
     /**
      * Return a list that contains the preorder traversal of the tree
      * starting from the given node
@@ -459,6 +469,17 @@ namespace llvm {
           result.push_back(entryID->second);
       }
       return result;
+    }
+
+    FunctionEntry getFunctionEntry(const vtbl_t &v, uint64_t offsetInVtable) {
+      for (auto &entry : vTableFunctionMap[v]) {
+        if (entry.offsetInVTable == offsetInVtable)
+          return entry;
+      }
+    }
+
+    std::vector<FunctionEntry> getFunctionEntries(const vtbl_t &v) {
+      return vTableFunctionMap[v];
     }
 
     uint64_t getMaxID() {

@@ -101,6 +101,6 @@ private:
   uint32_t encodeFunction(FunctionType* FuncTy);
 };
 
-}
+} // End llvm namespace
 
 #endif //LLVM_SAFEDISPATCHRETURNRANGE_H

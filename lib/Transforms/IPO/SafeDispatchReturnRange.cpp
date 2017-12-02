@@ -1,4 +1,4 @@
-//===-- SafeDispatchReturnRange.cpp - SafeDispatch ReturnRange code ---------------------------===//
+//===- SafeDispatchReturnRange.cpp - SafeDispatch ReturnRange code --------===//
 //
 //                     The LLVM Compiler Infrastructure
 //

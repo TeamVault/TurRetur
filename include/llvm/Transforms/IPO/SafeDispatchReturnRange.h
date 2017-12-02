@@ -18,8 +18,8 @@
 
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Transforms/IPO/SDEncode.h"
-#include "llvm/Transforms/IPO/SafeDispatchCHA.h"
 #include "llvm/Transforms/IPO/SafeDispatchLogStream.h"
+#include "llvm/Transforms/IPO/SafeDispatchReturnAddress.h"
 
 namespace llvm {
 
@@ -27,7 +27,7 @@ struct SDReturnRange : public ModulePass {
 public:
   static char ID;
 
-  SDReturnRange() : ModulePass(ID), Encoder(0x7FFFE) {
+  SDReturnRange() : ModulePass(ID) {
     sdLog::stream() << "initializing SDReturnRange pass\n";
     initializeSDReturnRangePass(*PassRegistry::getPassRegistry());
     pseudoDebugLoc = 1;
@@ -41,25 +41,20 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<SDBuildCHA>();
+    AU.addRequired<SDReturnAddress>();
     AU.addPreserved<SDBuildCHA>();
-  }
-
-  const StringSet<> *getStaticCallees() {
-    return &CalledFunctions;
   }
 
 private:
   SDBuildCHA *CHA = nullptr;
-  SDEncoder Encoder;
+  SDEncoder *Encoder = nullptr;
+  std::map<std::string, uint64_t> FunctionIDMap{};
 
   /// Information about the virtual CallSites that are being found by this pass.
   std::vector<std::string> CallSiteDebugLocsVirtual;
 
   /// Information about the static CallSites that are being found by this pass.
   std::vector<std::string> CallSiteDebugLocsStatic;
-
-  /// Set of static Callees.
-  StringSet<> CalledFunctions;
 
   /// Set of all virtual CallSites.
   std::set<CallSite> VirtualCallSites {};
@@ -74,10 +69,10 @@ private:
   void processStaticCallSites(Module &M);
 
   /// Extract the CallSite information from @param CheckedVptrCall and add the CallSite to CallSiteDebugLocsVirtual.
-  void addVirtualCallSite(const CallInst *CheckedVptrCall, CallSite CallSite, Module &M);
+  bool addVirtualCallSite(const CallInst *CheckedVptrCall, CallSite CallSite, Module &M);
 
   /// Add the CallSite to CallSiteDebugLocsStatic.
-  void addStaticCallSite(CallSite CallSite, Module &M);
+  bool addStaticCallSite(CallSite CallSite, Module &M);
 
   /// Store all callSite information (later retrieved by the backend).
   void storeCallSites(Module &M);

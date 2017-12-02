@@ -42,7 +42,6 @@ public:
 
     loadVirtualCallSiteData();
     loadStaticCallSiteData();
-    loadStaticFunctionIDData();
   }
 
   virtual ~SDMachineFunction() {
@@ -54,21 +53,20 @@ public:
 
 private:
   // Constants
-  const int64_t unknownID = 0xFFFFF;
-  const int64_t indirectID = 0xFFFFF;
-  const int64_t tailID = 0xFEFEF;
+  const uint64_t unknownID = 0xFFFFF;
+  const uint64_t indirectID = 0xFFFFF;
+  const uint64_t tailID = 0xFFFFE;
 
   // Data
   std::map <std::string, std::string> CallSiteDebugLocVirtual;
   std::map <std::string, std::string> CallSiteDebugLocStatic;
 
-  std::map <std::string, std::pair<int64_t , int64_t>> CallSiteRange;
-  std::map <std::string, int64_t> FunctionIDMap;
+  std::map <std::string, std::pair<uint64_t , uint64_t>> CallSiteRange;
+  std::map <std::string, uint64_t> CallSiteID;
 
   // Functions
   void loadVirtualCallSiteData();
   void loadStaticCallSiteData();
-  void loadStaticFunctionIDData();
 
   bool processVirtualCallSite(std::string &DebugLocString,
                               MachineInstr &MI,
@@ -88,8 +86,8 @@ private:
   std::string debugLocToString(const DebugLoc &Log);
 
   // Analysis
-  std::vector<int64_t> RangeWidths;
-  std::map <int64_t, int> IDCount;
+  std::vector<uint64_t> RangeWidths;
+  std::map <uint64_t, int> IDCount;
 
   int NumberOfVirtual;
   int NumberOfStaticDirect;

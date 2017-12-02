@@ -17,7 +17,7 @@
 #define LLVM_SAFEDISPATCHRETURNADDRESS_H
 
 #include "llvm/Transforms/IPO/SafeDispatchLogStream.h"
-#include "llvm/Transforms/IPO/SafeDispatchReturnRange.h"
+#include "llvm/Transforms/IPO/SafeDispatchCHA.h"
 
 namespace llvm {
 
@@ -43,7 +43,8 @@ public:
 
     // get analysis results
     CHA = &getAnalysis<SDBuildCHA>();
-    StaticFunctions = getAnalysis<SDReturnRange>().getStaticCallees();
+    // Build the virtual ID ranges.
+    CHA->buildFunctionInfo();
 
     functionID = CHA->getMaxID() + 1;
 
@@ -125,12 +126,15 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<SDBuildCHA>(); // depends on SDBuildCHA pass (max virtual FunctionID)
-    AU.addRequired<SDReturnRange>(); // depends on ReturnRange pass  (StaticFunctions with Caller)
     AU.setPreservesAll();
   }
 
-  SDEncoder getEncoder() {
-    return Encoder;
+  SDEncoder *getEncoder() {
+    return &Encoder;
+  }
+
+  const std::map<std::string, uint64_t> getFunctionIDMap() const {
+    return FunctionIDMap;
   }
 
 private:
@@ -154,10 +158,8 @@ private:
 
   SDBuildCHA *CHA = nullptr;
   SDEncoder Encoder;
-
-  const StringSet<> *StaticFunctions{};
-
   std::map<std::string, uint64_t> FunctionIDMap{};
+
   uint64_t functionID{};
 
   bool isBlackListedFunction(const Function &F) const;

@@ -61,10 +61,8 @@ bool SDReturnRange::runOnModule(Module &M) {
   sdLog::stream() << "P7a. Started running the SDReturnRange pass ..." << sdLog::newLine << "\n";
 
   CHA = &getAnalysis<SDBuildCHA>();
-  //Encoder = getAnalysis<SDReturnAddress>().getEncoder();
-
-  // Build the virtual ID ranges.
-  CHA->buildFunctionInfo();
+  Encoder = getAnalysis<SDReturnAddress>().getEncoder();
+  FunctionIDMap = getAnalysis<SDReturnAddress>().getFunctionIDMap();
 
   // Process Callsites and annotate them for the backend pass.
   processVirtualCallSites(M);
@@ -111,13 +109,13 @@ void SDReturnRange::processVirtualCallSites(Module &M) {
 
     if (VCall != nullptr && VCall->getInstruction()) {
       // valid CallSite
-      addVirtualCallSite(IntrinsicCall, *VCall, M);
+      if (addVirtualCallSite(IntrinsicCall, *VCall, M))
+        ++count;
     } else {
       sdLog::log() << "\n";
       sdLog::warn() << "CallSite for intrinsic was not found.\n";
       IntrinsicCall->getParent()->dump();
     }
-    ++count;
     sdLog::log() << "\n";
   }
   sdLog::stream() << "Found virtual CallSites: " << count << "\n";
@@ -139,13 +137,13 @@ void SDReturnRange::processStaticCallSites(Module &M) {
         // Try to use I as a CallInst or a InvokeInst
         if (Call.getInstruction()) {
           if (Function *Callee = Call.getCalledFunction()) {
-            if (!isBlackListed(*Callee)){
-              addStaticCallSite(Call, M);
-              ++countDirect;
+            if (!isBlackListed(*Callee)) {
+              if (addStaticCallSite(Call, M))
+                ++countDirect;
             }
           } else if (CallSite(Call).isIndirectCall() && VirtualCallSites.find(Call) == VirtualCallSites.end()) {
-            addStaticCallSite(Call, M);
-            ++countIndirect;
+            if (addStaticCallSite(Call, M))
+              ++countIndirect;
           }
         }
       }
@@ -162,42 +160,46 @@ void SDReturnRange::processStaticCallSites(Module &M) {
   sdLog::stream() << "\n";
 }
 
-void SDReturnRange::addStaticCallSite(CallSite CallSite, Module &M) {
+bool SDReturnRange::addStaticCallSite(CallSite CallSite, Module &M) {
   assert(CallSite.getInstruction() && "Not a CallInst or InvokeInst!");
-
-  std::string FunctionName;
-  if (CallSite.getCalledFunction()) {
-    // Direct Call
-    FunctionName = CallSite.getCalledFunction()->getName().str();
-    CalledFunctions.insert(FunctionName);
-  } else if (CallSite.isTailCall()) {
-    // Tail Call
-    FunctionName = "__TAIL__";
-  } else {
-    // Indirect Call
-    FunctionName = "__INDIRECT__";
-    Type *Ty = CallSite.getCalledValue()->getType();
-    if (auto *PointerTy = dyn_cast<PointerType>(Ty)) {
-      if (auto *FuncTy = dyn_cast<FunctionType>(PointerTy->getElementType())) {
-        uint64_t FunctionTypeID = Encoder.getTypeID(FuncTy);
-        FunctionName = "__INDIRECT__" + std::to_string(FunctionTypeID);
-      }
-    }
-  }
 
   // write DebugLoc to map
   const DebugLoc* Loc = getOrCreateDebugLoc(CallSite, M);
   std::stringstream Stream = writeDebugLocToStream(Loc);
   std::string DebugLocString = Stream.str();
-  Stream <<  "," << FunctionName;
+
+  std::string FunctionName;
+  if (CallSite.getCalledFunction()) {
+    // Direct Call
+    FunctionName = CallSite.getCalledFunction()->getName();
+    auto Itr = FunctionIDMap.find(FunctionName);
+    if (Itr == FunctionIDMap.end()) {
+      sdLog::log() << "Skipped static CallSite " << CallSite->getParent()->getParent()->getName()
+                   << "(@" << DebugLocString
+                   << ") for Callee " << FunctionName << "\n";
+      return false;
+    }
+    FunctionName += "," + std::to_string(Itr->second);
+  } else if (CallSite.isTailCall()) {
+    // Tail Call
+    FunctionName = "__TAIL__";
+  } else {
+    // Indirect Call
+    uint64_t FunctionTypeID = Encoder->getTypeID(CallSite.getFunctionType());
+    FunctionName = "__INDIRECT__," + std::to_string(FunctionTypeID);
+  }
+
+  Stream << "," << FunctionName;
   CallSiteDebugLocsStatic.push_back(Stream.str());
 
   sdLog::log() << "Static CallSite " << CallSite->getParent()->getParent()->getName()
                << "(@" << DebugLocString
                << ") for Callee " << FunctionName << "\n";
+
+  return true;
 }
 
-void SDReturnRange::addVirtualCallSite(const CallInst *IntrinsicCall, CallSite CallSite, Module &M) {
+bool SDReturnRange::addVirtualCallSite(const CallInst *IntrinsicCall, CallSite CallSite, Module &M) {
   // Extract Metadata from Intrinsic.
   MetadataAsValue *Arg2 = dyn_cast<MetadataAsValue>(IntrinsicCall->getArgOperand(1));
   assert(Arg2);
@@ -222,7 +224,7 @@ void SDReturnRange::addVirtualCallSite(const CallInst *IntrinsicCall, CallSite C
   std::vector<SDBuildCHA::range_t> ranges = CHA->getFunctionRange(FunctionName, ClassName);
   if (ranges.empty()) {
     sdLog::errs() << "Call for " << FunctionName << " (" << ClassName << "," << PreciseName << ") has no range!?\n";
-    return;
+    return false;
   }
 
   // Write DebugLoc to map
@@ -239,6 +241,8 @@ void SDReturnRange::addVirtualCallSite(const CallInst *IntrinsicCall, CallSite C
 
   sdLog::log() << "Virtual CallSite (@" << DebugLocString
                << " for class " << ClassName << "(" << PreciseName << ")::" << FunctionName << "\n";
+
+  return true;
 }
 
 void SDReturnRange::storeCallSites(Module &M) {

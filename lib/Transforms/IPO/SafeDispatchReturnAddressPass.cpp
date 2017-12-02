@@ -79,8 +79,6 @@ bool SDReturnAddress::isBlackListedFunction(const Function &F) const {
 }
 
 bool SDReturnAddress::isStaticFunction(const Function &F, ProcessingInfo Info) const {
-  if (StaticFunctions->find(F.getName()) == StaticFunctions->end())
-    Info.insert(NoCaller);
   return true;
 }
 
@@ -103,7 +101,6 @@ bool SDReturnAddress::isVirtualFunction(const Function &F) const {
 }
 
 int SDReturnAddress::processStaticFunction(Function &F, ProcessingInfo &Info) {
-  FunctionIDMap[F.getName()] = functionID;
   int NumberOfChecks = generateCompareChecks(F, functionID, Info);
 
   sdLog::log() << "Function (static): " << F.getName()
@@ -115,6 +112,7 @@ int SDReturnAddress::processStaticFunction(Function &F, ProcessingInfo &Info) {
     Info.insert(NoReturn);
   } else {
     Info.IDs.insert(functionID);
+    FunctionIDMap[F.getName()] = functionID;
   }
 
   functionID++;

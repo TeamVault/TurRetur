@@ -58,14 +58,15 @@ bool SDMachineFunction::processVirtualCallSite(std::string &DebugLocString,
     sdLog::errs() << DebugLocString << " has not Range!\n";
     return false;
   }
-  int64_t min = range->second.first;
-  int64_t width = range->second.second - min;
+  uint64_t min = range->second.first;
+  uint64_t width = range->second.second - min;
 
 
   RangeWidths.push_back(width);
   for (int64_t i = min; i <= range->second.second; ++i) {
     IDCount[i]++;
   }
+
   TII->insertNoop(MBB, MI.getNextNode());
   MI.getNextNode()->operands_begin()[3].setImm(width | 0x80000);
   TII->insertNoop(MBB, MI.getNextNode());
@@ -91,17 +92,9 @@ bool SDMachineFunction::processStaticCallSite(std::string &DebugLocString,
 
   if (StringRef(FunctionName).startswith("__INDIRECT__")) {
     TII->insertNoop(MBB, MI.getNextNode());
-
-    auto Splits = StringRef(FunctionName).split("__INDIRECT__");
-    if (Splits.second.empty()) {
-      MI.getNextNode()->operands_begin()[3].setImm(indirectID);
-      IDCount[indirectID]++;
-    } else {
-      auto ID = std::stoul(Splits.second.str());
-      MI.getNextNode()->operands_begin()[3].setImm(ID);
-      IDCount[ID]++;
-    }
-
+    uint64_t ID = CallSiteID[DebugLocString];
+    MI.getNextNode()->operands_begin()[3].setImm(ID);
+    ++IDCount[ID];
     ++NumberOfIndirect;
     return true;
   }
@@ -109,24 +102,16 @@ bool SDMachineFunction::processStaticCallSite(std::string &DebugLocString,
   if (FunctionName == "__TAIL__") {
     TII->insertNoop(MBB, MI.getNextNode());
     MI.getNextNode()->operands_begin()[3].setImm(tailID);
-    IDCount[tailID]++;
+    ++IDCount[tailID];
     ++NumberOfTail;
     return true;
   }
 
-  auto IDIterator = FunctionIDMap.find(FunctionName);
-  if (IDIterator == FunctionIDMap.end()) {
-    if (StringRef(FunctionName).startswith("__")) {
-      return false;
-    }
-    sdLog::errs() << FunctionName << " has no ID!\n";
-    return false;
-  }
-
-  int64_t ID = IDIterator->second;
-  TII->insertNoop(MBB, MI.getNextNode());
-  MI.getNextNode()->operands_begin()[3].setImm(ID | 0x80000);
-  IDCount[ID]++;
+  uint64_t ID = CallSiteID[DebugLocString];
+  sdLog::log() << ID << "\n";
+  //TII->insertNoop(MBB, MI.getNextNode());
+  //MI.getNextNode()->operands_begin()[3].setImm(ID | 0x80000);
+  ++IDCount[ID];
   ++NumberOfStaticDirect;
   return true;
 }
@@ -179,8 +164,8 @@ void SDMachineFunction::loadVirtualCallSiteData() {
     std::getline(LineStream, FunctionName, ',');
     std::getline(LineStream, MinStr, ',');
     LineStream >> MaxStr;
-    int min = std::stoi(MinStr);
-    int max = std::stoi(MaxStr);
+    uint64_t min = std::stoul(MinStr);
+    uint64_t max = std::stoul(MaxStr);
     CallSiteDebugLocVirtual[DebugLoc] = FunctionName;
     CallSiteRange[DebugLoc] = {min, max};
     ++count;
@@ -192,44 +177,29 @@ void SDMachineFunction::loadStaticCallSiteData() {
   //TODO MATT: delete file
   std::ifstream InputFile("./SD_CallSitesStatic");
   std::string InputLine;
-  std::string DebugLoc, FunctionName;
+  std::string DebugLoc, FunctionName, IDString;
 
   int count = 0;
   while (std::getline(InputFile, InputLine)) {
     std::stringstream LineStream(InputLine);
 
     std::getline(LineStream, DebugLoc, ',');
-    LineStream >> FunctionName;
+    std::getline(LineStream, FunctionName, ',');
+    LineStream >> IDString;
+    if (IDString != "") {
+      uint64_t ID = std::stoul(IDString);
+      CallSiteID[DebugLoc] = ID;
+    }
     CallSiteDebugLocStatic[DebugLoc] = FunctionName;
     ++count;
   }
   sdLog::stream() << "Loaded static CallSites: " << count << "\n";
 }
 
-void SDMachineFunction::loadStaticFunctionIDData() {
-  //TODO MATT: delete file
-  std::ifstream InputFile("./SD_FunctionIDMap");
-  std::string InputLine;
-  std::string FunctionName, IDString;
-
-  int count = 0;
-  while (std::getline(InputFile, InputLine)) {
-    std::stringstream LineStream(InputLine);
-
-    std::getline(LineStream, FunctionName, ',');
-    LineStream >> IDString;
-    int ID = std::stoi(IDString);
-    FunctionIDMap[FunctionName] = ID;
-    ++count;
-  }
-
-  sdLog::stream() << "Loaded FunctionIDs: " << count << "\n";
-}
-
 void SDMachineFunction::analyse() {
   uint64_t sum = 0;
   if (!RangeWidths.empty()) {
-    for (int i : RangeWidths) {
+    for (uint64_t i : RangeWidths) {
       sum += i;
     }
     double avg = double(sum) / RangeWidths.size();

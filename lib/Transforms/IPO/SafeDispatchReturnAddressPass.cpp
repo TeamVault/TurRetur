@@ -16,6 +16,7 @@
 #include "llvm/Transforms/IPO/SafeDispatchReturnAddress.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <fstream>
+#include <llvm/Support/FileSystem.h>
 
 using namespace llvm;
 /**
@@ -41,6 +42,7 @@ static void createPrintCall(const std::string &FormatString,
                             std::vector<Value *> Args,
                             IRBuilder<> &builder,
                             Module *M) {
+  M->getGlobalVariable()
   GlobalVariable *formatStrGV = builder.CreateGlobalString(FormatString, "SafeDispatchFormatStr");
   ConstantInt *zero = builder.getInt32(0);
   ArrayRef<Value *> indices({zero, zero});
@@ -53,9 +55,35 @@ static void createPrintCall(const std::string &FormatString,
   builder.CreateCall(PrintProto, ArgsRef);
 }
 
+static std::string findOutputFileName(const Module *M) {
+  auto SDOutputMD = M->getNamedMetadata("sd_output");
+  auto SDFilenameMD = M->getNamedMetadata("sd_filename");
+
+  StringRef OutputPath;
+  if (SDOutputMD != nullptr)
+    OutputPath = dyn_cast_or_null<MDString>(SDOutputMD->getOperand(0)->getOperand(0))->getString();
+  else if (SDFilenameMD != nullptr)
+    OutputPath = ("./" + dyn_cast_or_null<MDString>(SDFilenameMD->getOperand(0)->getOperand(0))->getString()).str();
+
+  std::string FileName = "./SDStats";
+  if (OutputPath != "") {
+    FileName = (OutputPath + "-SDStats").str();
+  }
+
+  if (sys::fs::exists(FileName)) {
+    uint number = 1;
+    while (sys::fs::exists(FileName + Twine(number))) {
+      number++;
+    }
+    FileName = (FileName + Twine(number)).str();
+  }
+
+  return FileName;
+};
+
 int SDReturnAddress::processFunction(Function &F, ProcessingInfo &Info) {
   if (isBlackListedFunction(F)) {
-    Info.insert(BlackListed);
+    Info.Type = BlackListed;
     return 0;
   }
 
@@ -101,49 +129,62 @@ bool SDReturnAddress::isVirtualFunction(const Function &F) const {
 }
 
 int SDReturnAddress::processStaticFunction(Function &F, ProcessingInfo &Info) {
+  Info.Type = Static;
+  if (F.isDeclaration() || F.hasExternalLinkage() || F.hasExternalWeakLinkage()) {
+    Info.insert(External);
+  }
+
   int NumberOfChecks = generateCompareChecks(F, functionID, Info);
 
   sdLog::log() << "Function (static): " << F.getName()
                << " gets ID: " << functionID
                << " (Checks: " << NumberOfChecks << ")\n";
 
-  Info.insert(Static);
   if (NumberOfChecks == 0) {
     Info.insert(NoReturn);
   } else {
     Info.IDs.insert(functionID);
     FunctionIDMap[F.getName()] = functionID;
+    functionID++;
   }
 
-  functionID++;
   return NumberOfChecks;
 }
 
 int SDReturnAddress::processVirtualFunction(Function &F, ProcessingInfo &Info) {
   StringRef functionName = F.getName();
-  std::string functionNameString = functionName.str();
 
-  // check for thunk (sets functionNameString to the function the thunk is used for)
-  if (functionName.startswith("_ZTh")) {
-    // remove the "_ZTh" part from the name and replace it with "_Z"
-    auto splits = functionName.drop_front(1).split("_");
-    functionNameString = ("_Z" + splits.second).str();
+  Info.Type = Virtual;
+  if (F.isDeclaration() || F.hasExternalLinkage() || F.hasExternalWeakLinkage()) {
+    Info.insert(External);
+  }
 
-    if (CHA->getFunctionID(functionNameString).empty()) {
-      sdLog::warn() << "Thunk to function conversion failed. Skipping thunk: " << functionName << "\n";
+  std::vector<uint64_t> IDs = CHA->getFunctionID(functionName.str());
+  if (IDs.empty()) {
+    // check for thunk (sets functionNameString to the function the thunk is used for)
+    if (functionName.startswith("_ZTh")) {
+      // remove the "_ZTh" part from the name and replace it with "_Z"
+      auto splits = functionName.drop_front(1).split("_");
+      std::string functionNameString = ("_Z" + splits.second).str();
+
+      IDs = CHA->getFunctionID(functionNameString);
+      if (IDs.empty()) {
+        sdLog::errs() << "Thunk conversion failed: " << functionName << "->" << functionNameString <<  "\n";
+        return 0;
+      }
+    } else {
+      sdLog::errs() << "Virtual Function without ID: " << functionName << "\n";
       return 0;
     }
   }
 
-  std::vector<uint64_t> IDs = CHA->getFunctionID(functionNameString);
-  assert(!IDs.empty() && "Unknown Virtual Function!");
+  assert(IDs.size() > 0);
   FunctionIDMap[F.getName()] = IDs[0];
   int NumberOfChecks = generateRangeChecks(F, IDs, Info);
 
   sdLog::log() << "Function (virtual): " << F.getName()
                << " (Checks: " << NumberOfChecks << ")\n";
 
-  Info.insert(Virtual);
   if (NumberOfChecks == 0) {
     Info.insert(NoReturn);
   } else {
@@ -178,7 +219,6 @@ int SDReturnAddress::generateRangeChecks(Function &F, std::vector<uint64_t> IDs,
     ConstantInt *zero = builder.getInt32(0);
     ConstantInt *offsetFirstNOP = builder.getInt32(3);
     ConstantInt *offsetSecondNOP = builder.getInt32(3 + 7);
-    ConstantInt *bitMask = builder.getInt32(0x7FFFF);
     auto int64Ty = Type::getInt64Ty(M->getContext());
     auto int32PtrTy = Type::getInt32PtrTy(M->getContext());
 
@@ -188,14 +228,12 @@ int SDReturnAddress::generateRangeChecks(Function &F, std::vector<uint64_t> IDs,
     // Load minID from first NOP (extract actual value using the bit mask)
     auto minPtr = builder.CreateGEP(ReturnAddress, offsetFirstNOP);
     auto min32Ptr = builder.CreatePointerCast(minPtr, int32PtrTy);
-    auto minMasked = builder.CreateLoad(min32Ptr);
-    auto minID = builder.CreateAnd(minMasked, bitMask);
+    auto minID = builder.CreateLoad(min32Ptr);
 
     // Load width from second NOP (extract actual value using the bit mask)
     auto widthPtr = builder.CreateGEP(ReturnAddress, offsetSecondNOP);
     auto width32Ptr = builder.CreatePointerCast(widthPtr, int32PtrTy);
-    auto widthMasked = builder.CreateLoad(width32Ptr);
-    auto width = builder.CreateAnd(widthMasked, bitMask);
+    auto width = builder.CreateLoad(width32Ptr);
 
     if (IDs.size() != 1) {
       // Diamond detected
@@ -203,84 +241,72 @@ int SDReturnAddress::generateRangeChecks(Function &F, std::vector<uint64_t> IDs,
     }
 
     // Build first check
-    ConstantInt *IDValue = builder.getInt32(uint32_t(IDs[0]));
+    ConstantInt *IDValue = builder.getInt32(uint32_t(IDs[0] | 0x80000));
     auto diff = builder.CreateSub(IDValue, minID);
-    auto check = builder.CreateICmpULE(diff, width);
+    auto check = builder.CreateICmpUGT(diff, width);
 
-    // Branch to Success or Next
-    // Next is used either for additional checks or for the fail block.
-    TerminatorInst *Success, *Next;
+    // Branch to CheckFailed if the first range check fails
     MDBuilder MDB(F.getContext());
-    SplitBlockAndInsertIfThenElse(check, RI, &Success, &Next,
-                                  MDB.createBranchWeights(
-                                          std::numeric_limits<uint32_t>::max(),
-                                          std::numeric_limits<uint32_t>::min()));
+    TerminatorInst *CheckFailed = SplitBlockAndInsertIfThen(check, RI, true);
+    BasicBlock *SuccessBlock = RI->getParent();
 
     // Prepare for additional checks
-    BasicBlock *SuccessBlock = Success->getParent();
-    BasicBlock *CurrentBlock = Next->getParent();
-    Next->eraseFromParent();
+    BasicBlock *CurrentBlock = CheckFailed->getParent();
+    CheckFailed->eraseFromParent();
     assert(CurrentBlock->empty() && "Current Block still contains Instructions!");
 
     // Create additional ID checks
     for (int i = 1; i < IDs.size(); ++i) {
       // Build check
       builder.SetInsertPoint(CurrentBlock);
-      IDValue = builder.getInt32(uint32_t(IDs[i]));
+      CurrentBlock->setName("sd.range");
+      IDValue = builder.getInt32(uint32_t(IDs[i] | 0x80000));
       diff = builder.CreateSub(IDValue, minID);
       check = builder.CreateICmpULE(diff, width);
-
-      // New block in case this ID check fails
       CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
       builder.CreateCondBr(check, SuccessBlock, CurrentBlock);
     }
 
-    // Handle external call case
-    //TODO MATT: fix constant for external call
-    /*
-    builder.SetInsertPoint(CurrentBlock);
-    ConstantInt *memRange = builder.getInt64(0x2000000);
-    auto returnAddressAsInt = builder.CreatePtrToInt(ReturnAddress, int64Ty);
-    auto checkExternal = builder.CreateICmpUGT(returnAddressAsInt, memRange);
-    CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
-    builder.CreateCondBr(checkExternal, SuccessBlock, CurrentBlock);
-    */
-
     if (F.hasAddressTaken()) {
+      // Handle external call case
+      //TODO MATT: fix constant for external call
+      builder.SetInsertPoint(CurrentBlock);
+      CurrentBlock->setName("sd.external");
+      ConstantInt *memRange = builder.getInt64(0x2000000);
+      auto returnAddressAsInt = builder.CreatePtrToInt(ReturnAddress, int64Ty);
+      auto checkExternal = builder.CreateICmpUGT(returnAddressAsInt, memRange);
+      CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
+      builder.CreateCondBr(checkExternal, SuccessBlock, CurrentBlock);
+
       // Handle indirect call case
       builder.SetInsertPoint(CurrentBlock);
+      CurrentBlock->setName("sd.indirect");
       uint32_t FunctionTypeID = Encoder.getTypeID(F.getFunctionType());
-      if (FunctionTypeID != 0) {
-        ConstantInt *indirectMagicNumber = builder.getInt32(FunctionTypeID);
-        auto checkIndirectCall = builder.CreateICmpEQ(minID, indirectMagicNumber);
-        CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
-        builder.CreateCondBr(checkIndirectCall, SuccessBlock, CurrentBlock);
-        Info.IDs.insert(uint64_t(FunctionTypeID));
-      }
-      /*
+      ConstantInt *indirectMagicNumber = builder.getInt32(FunctionTypeID);
+      auto checkIndirectCall = builder.CreateICmpEQ(minID, indirectMagicNumber);
+      CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
+      builder.CreateCondBr(checkIndirectCall, SuccessBlock, CurrentBlock);
+      Info.ExtraIDs.insert(uint64_t(FunctionTypeID));
+
       builder.SetInsertPoint(CurrentBlock);
+      CurrentBlock->setName("sd.indirect2");
       ConstantInt *unknownMagicNumber = builder.getInt32(0x7FFFF);
       auto checkUnknownCall = builder.CreateICmpEQ(minID, unknownMagicNumber);
       CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
       builder.CreateCondBr(checkUnknownCall, SuccessBlock, CurrentBlock);
-      Info.IDs.insert(0x7FFFF);
-       */
+      Info.ExtraIDs.insert(0x7FFFF);
     }
-
-    // Build the success block
-    builder.SetInsertPoint(Success);
-    std::string formatStringSuccess = "'\n";
-    std::vector<Value *> argsSuccess;
-    //createPrintCall(formatStringSuccess, argsSuccess, builder, M);
 
     // Build the fail block (CurrentBlock is the block after the last check failed)
     builder.SetInsertPoint(CurrentBlock);
+    CurrentBlock->setName("sd.fail");
     std::string formatStringFail = F.getName().str() + " virtual ID %d (got %d,%d from %p) -> %d\n";
     std::vector<Value *> argsFail = {IDValue, minID, width, ReturnAddress, check};
-    createPrintCall(formatStringFail, argsFail, builder, M);
+    //createPrintCall(formatStringFail, argsFail, builder, M);
 
     // Build the fail case TerminatorInst (quit program or continue after backward-edge violation?)
-    builder.CreateBr(RI->getParent());
+    builder.CreateBr(SuccessBlock);
+    //builder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::trap));
     //builder.CreateUnreachable();
 
     count++;
@@ -313,7 +339,6 @@ int SDReturnAddress::generateCompareChecks(Function &F, uint64_t ID, ProcessingI
     // Some constants we need
     ConstantInt *zero = builder.getInt32(0);
     ConstantInt *offsetFirstNOP = builder.getInt32(3);
-    ConstantInt *bitMask = builder.getInt32(0x7FFFF);
     auto int64Ty = Type::getInt64Ty(M->getContext());
     auto int32PtrTy = Type::getInt32PtrTy(M->getContext());
 
@@ -323,97 +348,65 @@ int SDReturnAddress::generateCompareChecks(Function &F, uint64_t ID, ProcessingI
     // Load minID from first NOP (extract actual value using the bit mask)
     auto minPtr = builder.CreateGEP(ReturnAddress, offsetFirstNOP);
     auto min32Ptr = builder.CreatePointerCast(minPtr, int32PtrTy);
-    auto minMasked = builder.CreateLoad(min32Ptr);
-    auto minID = builder.CreateAnd(minMasked, bitMask);
+    auto minID = builder.CreateLoad(min32Ptr);
 
     // Build ID compare check
-    ConstantInt *IDValue = builder.getInt32(uint32_t(ID));
+    ConstantInt *IDValue = builder.getInt32(uint32_t(ID | 0x80000));
     auto check = builder.CreateICmpEQ(IDValue, minID);
 
-    // Branch to Success or Fail
+    // Branch to CheckFailed if the ID check fails
     MDBuilder MDB(F.getContext());
-    TerminatorInst *Success, *Fail;
-    SplitBlockAndInsertIfThenElse(check,
-                                  RI,
-                                  &Success,
-                                  &Fail,
-                                  MDB.createBranchWeights(
-                                          std::numeric_limits<uint32_t>::max(),
-                                          std::numeric_limits<uint32_t>::min()));
+    TerminatorInst *CheckFailed = SplitBlockAndInsertIfThen(check, RI, true);
+    BasicBlock *SuccessBlock = RI->getParent();
 
-    // Build the success block
-    std::string formatStringSuccess = ".\n";
-    std::vector<Value *> argsSuccess;
-    builder.SetInsertPoint(Success);
-    //createPrintCall(formatStringSuccess, argsSuccess, builder, M);
-
+    // Prepare for additional checks
+    BasicBlock *CurrentBlock = CheckFailed->getParent();
+    CheckFailed->eraseFromParent();
+    assert(CurrentBlock->empty() && "Current Block still contains Instructions!");
 
     // Build the fail block
-    builder.SetInsertPoint(Fail);
-
-    // Handle external call case
-    //TODO MATT: fix constant for external call
-    ConstantInt *memRange = builder.getInt64(0x2000000);
-    auto returnAddressAsInt = builder.CreatePtrToInt(ReturnAddress, int64Ty);
-    auto checkExternal = builder.CreateICmpUGT(returnAddressAsInt, memRange);
-    TerminatorInst *IsExternal, *IsNotExternal;
-    SplitBlockAndInsertIfThenElse(checkExternal, Fail, &IsExternal, &IsNotExternal);
-
-
-    builder.SetInsertPoint(IsExternal);
-    std::string formatStringOutOfSection = F.getName().str() + " external %p\n";
-    std::vector<Value *> argsOutOfSection = {ReturnAddress};
-    //createPrintCall(formatStringOutOfSection, argsOutOfSection, builder, M);
-    builder.SetInsertPoint(IsNotExternal);
-
+    builder.SetInsertPoint(CurrentBlock);
 
     if (F.hasAddressTaken()) {
+      // Handle external call case
+      //TODO MATT: fix constant for external call
+      builder.SetInsertPoint(CurrentBlock);
+      CurrentBlock->setName("sd.external");
+      ConstantInt *memRange = builder.getInt64(0x2000000);
+      auto returnAddressAsInt = builder.CreatePtrToInt(ReturnAddress, int64Ty);
+      auto checkExternal = builder.CreateICmpUGT(returnAddressAsInt, memRange);
+      CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
+      builder.CreateCondBr(checkExternal, SuccessBlock, CurrentBlock);
+
       // Handle indirect call case
+      builder.SetInsertPoint(CurrentBlock);
+      CurrentBlock->setName("sd.indirect");
       uint32_t FunctionTypeID = Encoder.getTypeID(F.getFunctionType());
-      if (FunctionTypeID != 0) {
-        ConstantInt *indirectMagicNumber = builder.getInt32(FunctionTypeID);
-        auto checkIndirectCall = builder.CreateICmpEQ(minID, indirectMagicNumber);
-        TerminatorInst *IsIndirectCall, *IsNotIndirectCall;
-        SplitBlockAndInsertIfThenElse(checkIndirectCall,
-                                      IsNotExternal,
-                                      &IsIndirectCall,
-                                      &IsNotIndirectCall);
-        Info.IDs.insert(uint64_t(FunctionTypeID));
+      ConstantInt *indirectMagicNumber = builder.getInt32(FunctionTypeID);
+      auto checkIndirectCall = builder.CreateICmpEQ(minID, indirectMagicNumber);
+      CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
+      builder.CreateCondBr(checkIndirectCall, SuccessBlock, CurrentBlock);
+      Info.ExtraIDs.insert(uint64_t(FunctionTypeID));
 
-
-        builder.SetInsertPoint(IsIndirectCall);
-        std::string formatStringIndirect = F.getName().str() + " indirect call from %p\n";
-        std::vector<Value *> argsIndirect = {ReturnAddress};
-        //createPrintCall(formatStringIndirect, argsIndirect, builder, M);
-        builder.SetInsertPoint(IsNotIndirectCall);
-
-        ConstantInt *unknownMagicNumber = builder.getInt32(0x7FFFF);
-        auto checkUnknownCall = builder.CreateICmpEQ(minID, unknownMagicNumber);
-        TerminatorInst *IsUnknown, *IsNotUnknown;
-        SplitBlockAndInsertIfThenElse(checkUnknownCall,
-                                      IsNotIndirectCall,
-                                      &IsUnknown,
-                                      &IsNotUnknown);
-        builder.SetInsertPoint(IsNotUnknown);
-        Info.IDs.insert(0x7FFFF);
-      }
+      builder.SetInsertPoint(CurrentBlock);
+      CurrentBlock->setName("sd.indirect2");
+      ConstantInt *unknownMagicNumber = builder.getInt32(0x7FFFF);
+      auto checkUnknownCall = builder.CreateICmpEQ(minID, unknownMagicNumber);
+      CurrentBlock = BasicBlock::Create(F.getContext(), "", CurrentBlock->getParent());
+      builder.CreateCondBr(checkUnknownCall, SuccessBlock, CurrentBlock);
+      Info.ExtraIDs.insert(0x7FFFF);
     }
 
-    /*
-    // [retAddr] is NOP?
-    auto nopPtr = builder.CreateGEP(ReturnAddress, zero);
-    auto nop = builder.CreateLoad(nopPtr);
-    ConstantInt *nopOpcode = builder.getInt8(0x0F);
-    auto checkNOP = builder.CreateICmpNE(nop, nopOpcode);
-    auto FailNOP = SplitBlockAndInsertIfThen(checkNOP, IsNotIndirectCall, false);
-    builder.SetInsertPoint(FailNOP);
-    */
-
-    // Build the final fail block (no case matched -> backwards-edge violation)
+    // Build the fail block (CurrentBlock is the block after the last check failed)
+    builder.SetInsertPoint(CurrentBlock);
+    CurrentBlock->setName("sd.fail");
     std::string formatStringFail = F.getName().str() + " static ID %d (got %d from %p) -> %d\n";
     std::vector<Value *> argsFail = {IDValue, minID, ReturnAddress, check};
-    createPrintCall(formatStringFail, argsFail, builder, M);
-    // Quit program after backward-edge violation
+    //createPrintCall(formatStringFail, argsFail, builder, M);
+
+    // Build the fail case TerminatorInst (quit program or continue after backward-edge violation?)
+    builder.CreateBr(SuccessBlock);
+    //builder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::trap));
     //builder.CreateUnreachable();
 
     count++;
@@ -424,20 +417,14 @@ int SDReturnAddress::generateCompareChecks(Function &F, uint64_t ID, ProcessingI
 void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
                      std::vector<ProcessingInfo> &FunctionsMarkedStatic,
                      std::vector<ProcessingInfo> &FunctionsMarkedVirtual,
-                     std::vector<ProcessingInfo> &FunctionsMarkedNoCaller,
+                     std::vector<ProcessingInfo> &FunctionsMarkedExternal,
                      std::vector<ProcessingInfo> &FunctionsMarkedNoReturn,
                      std::vector<ProcessingInfo> &FunctionsMarkedBlackListed) {
 
   sdLog::stream() << "Store statistics for module: " << M.getName() << "\n";
 
   int number = 0;
-  std::string outName = ((Twine)("./SD_Stats" + std::to_string(number))).str();
-  std::ifstream infile(outName);
-  while(infile.good()) {
-    number++;
-    outName = ((Twine)("./SD_Stats" + std::to_string(number))).str();
-    infile = std::ifstream(outName);
-  }
+  std::string outName = findOutputFileName(&M);
   std::ofstream Outfile(outName);
 
   std::ostream_iterator <std::string> OutIterator(Outfile, "\n");
@@ -450,6 +437,9 @@ void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
     for (auto &ID : Entry.IDs) {
       Outfile << "," << std::to_string(ID);
     }
+    for (auto &ID : Entry.ExtraIDs) {
+      Outfile << "," << std::to_string(ID);
+    }
     Outfile << "\n";
   }
   Outfile << "##\n";
@@ -458,6 +448,22 @@ void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
   for (auto &Entry : FunctionsMarkedVirtual) {
     Outfile << Entry.RangeName.str();
     for (auto &ID : Entry.IDs) {
+      Outfile << "," << std::to_string(ID);
+    }
+    for (auto &ID : Entry.ExtraIDs) {
+      Outfile << "," << std::to_string(ID);
+    }
+    Outfile << "\n";
+  }
+  Outfile << "##\n";
+
+  Outfile << "### External functions: " << FunctionsMarkedExternal.size() << "\n";
+  for (auto &Entry : FunctionsMarkedExternal) {
+    Outfile << Entry.RangeName.str();
+    for (auto &ID : Entry.IDs) {
+      Outfile << "," << std::to_string(ID);
+    }
+    for (auto &ID : Entry.ExtraIDs) {
       Outfile << "," << std::to_string(ID);
     }
     Outfile << "\n";
@@ -470,6 +476,9 @@ void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
     for (auto &ID : Entry.IDs) {
       Outfile << "," << std::to_string(ID);
     }
+    for (auto &ID : Entry.ExtraIDs) {
+      Outfile << "," << std::to_string(ID);
+    }
     Outfile << "\n";
   }
   Outfile << "##\n";
@@ -480,19 +489,13 @@ void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
     for (auto &ID : Entry.IDs) {
       Outfile << "," << std::to_string(ID);
     }
-    Outfile << "\n";
-  }
-  Outfile << "##\n";
-
-  Outfile << "### Without caller: " << FunctionsMarkedNoCaller.size() << "\n";
-  for (auto &Entry : FunctionsMarkedNoCaller) {
-    Outfile << Entry.RangeName.str();
-    for (auto &ID : Entry.IDs) {
+    for (auto &ID : Entry.ExtraIDs) {
       Outfile << "," << std::to_string(ID);
     }
     Outfile << "\n";
   }
   Outfile << "##\n";
+
 }
 
 void SDReturnAddress::storeFunctionIDMap(Module &M) {

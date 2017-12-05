@@ -53,12 +53,12 @@ public:
     // init statistics
     std::vector<ProcessingInfo> FunctionsMarkedStatic;
     std::vector<ProcessingInfo> FunctionsMarkedVirtual;
-    std::vector<ProcessingInfo> FunctionsMarkedNoCaller;
+    std::vector<ProcessingInfo> FunctionsMarkedExternal;
     std::vector<ProcessingInfo> FunctionsMarkedNoReturn;
     std::vector<ProcessingInfo> FunctionsMarkedBlackListed;
 
     int NumberOfTotalChecks = 0;
-
+    int NumberOfFunctions = 0;
     for (auto &F : M) {
       ProcessingInfo Info;
       Info.RangeName = F.getName();
@@ -67,24 +67,32 @@ public:
       int NumberOfChecks = processFunction(F, Info);
 
       bool InfoValidatesNoChecks = false;
+      switch (Info.Type) {
+        case Static:
+          FunctionsMarkedStatic.push_back(Info);
+          break;
+        case Virtual:
+          FunctionsMarkedVirtual.push_back(Info);
+          break;
+        case BlackListed:
+          FunctionsMarkedBlackListed.push_back(Info);
+          InfoValidatesNoChecks = true;
+          break;
+        case None:
+          llvm_unreachable("Function without Type");
+      }
+
       for (auto &Entry : Info.Flags) {
         switch (Entry) {
-          case Static:
-            FunctionsMarkedStatic.push_back(Info);
-            break;
-          case Virtual:
-            FunctionsMarkedVirtual.push_back(Info);
-            break;
-          case NoCaller:
-            FunctionsMarkedNoCaller.push_back(Info);
+          case External:
+            FunctionsMarkedExternal.push_back(Info);
+            InfoValidatesNoChecks = true;
             break;
           case NoReturn:
             FunctionsMarkedNoReturn.push_back(Info);
             InfoValidatesNoChecks = true;
             break;
-          case BlackListed:
-            FunctionsMarkedBlackListed.push_back(Info);
-            InfoValidatesNoChecks = true;
+          case NoCaller:
             break;
         }
       }
@@ -93,28 +101,25 @@ public:
         sdLog::errs() << "Function: " << Info.RangeName << "has no checks but is not NoReturn or blacklisted!\n";
 
       NumberOfTotalChecks += NumberOfChecks;
-    }
-
-    // enables the backend pass
-    if (NumberOfTotalChecks > 0) {
-      M.getOrInsertNamedMetadata("SD_emit_return_labels");
-
-      // store function IDs for backend
-      storeFunctionIDMap(M);
+      NumberOfFunctions++;
     }
 
     // print and store statistics
     sdLog::stream() << sdLog::newLine << "P7b. SDReturnAddress statistics:" << "\n";
     sdLog::stream() << "Total number of checks: " << NumberOfTotalChecks << "\n";
+    sdLog::stream() << "\n";
+    sdLog::stream() << "Total number of functions: " << NumberOfFunctions << "\n";
     sdLog::stream() << "Total number of static functions: " << FunctionsMarkedStatic.size() << "\n";
     sdLog::stream() << "Total number of virtual functions: " << FunctionsMarkedVirtual.size() << "\n";
     sdLog::stream() << "Total number of blacklisted functions: " << FunctionsMarkedBlackListed.size() << "\n";
+    sdLog::stream() << "\n";
+    sdLog::stream() << "Total number of external functions: " << FunctionsMarkedExternal.size() << "\n";
     sdLog::stream() << "Total number of functions without return: " << FunctionsMarkedNoReturn.size() << "\n";
 
     storeStatistics(M, NumberOfTotalChecks,
                     FunctionsMarkedStatic,
                     FunctionsMarkedVirtual,
-                    FunctionsMarkedNoCaller,
+                    FunctionsMarkedExternal,
                     FunctionsMarkedNoReturn,
                     FunctionsMarkedBlackListed);
 
@@ -139,12 +144,18 @@ public:
 
 private:
   enum ProcessingInfoFlags {
-    Static, Virtual, NoCaller, NoReturn, BlackListed
+    NoCaller, NoReturn, External
+  };
+
+  enum ProcessingInfoType {
+    Static, Virtual, BlackListed, None
   };
 
   struct ProcessingInfo {
+    ProcessingInfoType Type = None;
     std::set<ProcessingInfoFlags> Flags{};
     std::set<uint64_t> IDs{};
+    std::set<uint64_t> ExtraIDs{};
     StringRef RangeName;
 
     void insert(ProcessingInfoFlags Flag){

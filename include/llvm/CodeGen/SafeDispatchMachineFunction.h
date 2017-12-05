@@ -39,13 +39,10 @@ public:
     //std::string stopper;
     //std::cin >> stopper;
     //errs() << stopper;
-
-    loadVirtualCallSiteData();
-    loadStaticCallSiteData();
   }
 
   virtual ~SDMachineFunction() {
-    analyse();
+    analyse(M);
     sdLog::stream() << "deleting SDMachineFunction pass\n";
   }
 
@@ -56,6 +53,8 @@ private:
   const uint64_t unknownID = 0xFFFFF;
   const uint64_t indirectID = 0xFFFFF;
   const uint64_t tailID = 0xFFFFE;
+  const Module* M = nullptr;
+  bool SkipPass = false;
 
   // Data
   std::map <std::string, std::string> CallSiteDebugLocVirtual;
@@ -65,8 +64,8 @@ private:
   std::map <std::string, uint64_t> CallSiteID;
 
   // Functions
-  void loadVirtualCallSiteData();
-  void loadStaticCallSiteData();
+  int loadVirtualCallSiteData();
+  int loadStaticCallSiteData();
 
   bool processVirtualCallSite(std::string &DebugLocString,
                               MachineInstr &MI,
@@ -95,7 +94,7 @@ private:
   int NumberOfTail;
   int NumberOfUnknown;
 
-  void analyse();
+  void analyse(const Module *M);
 };
 }
 

@@ -25,7 +25,12 @@
 /**
  * named md used to store the vtable info
  */
-#define SD_MD_CLASSINFO  "sd.class_info." 
+#define SD_MD_CLASSINFO  "sd.class_info."
 
+/**
+ * named md used to store the TurRetur CallSite info
+ */
+#define SD_MD_RETUR_VIRTUAL  "sd.retur_info.virtual"
+#define SD_MD_RETUR_NORMAL  "sd.retur_info.normal"
 #endif
 

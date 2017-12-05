@@ -119,7 +119,7 @@ public:
   uint32_t getTypeID(FunctionType *FuncTy) {
     auto Encoding = SDEncoding::encodeFunction(FuncTy, true, true);
     if (EncodingToTypeID.find(Encoding) == EncodingToTypeID.end()) {
-      sdLog::stream() << "New FunctionTypeID " << NextTypeID << ": " << *FuncTy << "\n";
+      sdLog::log() << "New FunctionTypeID " << NextTypeID << ": " << *FuncTy << "\n";
       EncodingToTypeID[Encoding] = NextTypeID;
       --NextTypeID;
     }

@@ -1,11 +1,56 @@
+#include <llvm/Support/FileSystem.h>
 #include "llvm/CodeGen/SafeDispatchMachineFunction.h"
 
 using namespace llvm;
 
+static std::string findOutputFileName(const Module *M) {
+  auto SDOutputMD = M->getNamedMetadata("sd_output");
+  auto SDFilenameMD = M->getNamedMetadata("sd_filename");
+
+  StringRef OutputPath;
+  if (SDOutputMD != nullptr)
+    OutputPath = dyn_cast_or_null<MDString>(SDOutputMD->getOperand(0)->getOperand(0))->getString();
+  else if (SDFilenameMD != nullptr)
+    OutputPath = ("./" + dyn_cast_or_null<MDString>(SDFilenameMD->getOperand(0)->getOperand(0))->getString()).str();
+
+  std::string FileName = "./SDBackend";
+  if (OutputPath != "") {
+    FileName = (OutputPath + "-Backend").str();
+  }
+
+  std::string FileNameExtended = (Twine(FileName) + ".csv").str();
+  if (sys::fs::exists(FileNameExtended)) {
+    uint number = 1;
+    while (sys::fs::exists(FileName + Twine(number) + ".csv")) {
+      number++;
+    }
+    FileNameExtended = (FileName + Twine(number) + ".csv").str();
+  }
+
+  return FileNameExtended;
+};
+
+
 bool SDMachineFunction::runOnMachineFunction(MachineFunction &MF)  {
   // Enable SDMachineFunction pass?
-  if (MF.getMMI().getModule()->getNamedMetadata("SD_emit_return_labels") == nullptr)
+  if (SkipPass)
     return false;
+
+  if (M == nullptr) {
+    M = MF.getMMI().getModule();
+
+    int VirtualLoaded = loadVirtualCallSiteData();
+    int StaticLoaded = loadStaticCallSiteData();
+
+    if (VirtualLoaded == 0 && StaticLoaded == 0) {
+      sdLog::stream() << "No CallSites loaded.\n";
+      SkipPass = true;
+      return false;
+    }
+
+    sdLog::stream() << "Loaded virtual CallSites: " << VirtualLoaded << "\n";
+    sdLog::stream() << "Loaded static CallSites: " << StaticLoaded << "\n";
+  }
 
   sdLog::log() << "Running SDMachineFunction pass: "<< MF.getName() << "\n";
 
@@ -91,27 +136,27 @@ bool SDMachineFunction::processStaticCallSite(std::string &DebugLocString,
                << " is static Caller for " << FunctionName << "\n";
 
   if (StringRef(FunctionName).startswith("__INDIRECT__")) {
-    TII->insertNoop(MBB, MI.getNextNode());
     uint64_t ID = CallSiteID[DebugLocString];
-    MI.getNextNode()->operands_begin()[3].setImm(ID);
-    ++IDCount[ID];
+    TII->insertNoop(MBB, MI.getNextNode());
+    MI.getNextNode()->operands_begin()[3].setImm(ID | 0x80000);
+    IDCount[ID]++;
     ++NumberOfIndirect;
     return true;
   }
 
   if (FunctionName == "__TAIL__") {
+    return true;
     TII->insertNoop(MBB, MI.getNextNode());
     MI.getNextNode()->operands_begin()[3].setImm(tailID);
-    ++IDCount[tailID];
+    IDCount[tailID]++;
     ++NumberOfTail;
     return true;
   }
 
   uint64_t ID = CallSiteID[DebugLocString];
-  sdLog::log() << ID << "\n";
-  //TII->insertNoop(MBB, MI.getNextNode());
-  //MI.getNextNode()->operands_begin()[3].setImm(ID | 0x80000);
-  ++IDCount[ID];
+  TII->insertNoop(MBB, MI.getNextNode());
+  MI.getNextNode()->operands_begin()[3].setImm(ID | 0x80000);
+  IDCount[ID]++;
   ++NumberOfStaticDirect;
   return true;
 }
@@ -147,56 +192,71 @@ std::string SDMachineFunction::debugLocToString(const DebugLoc &Loc) {
   return Stream.str();
 };
 
-void SDMachineFunction::loadVirtualCallSiteData() {
-  //TODO MATT: delete file
-  std::ifstream InputFile("./SD_CallSitesVirtual");
-  std::string InputLine;
+int SDMachineFunction::loadVirtualCallSiteData() {
+  assert(M != nullptr && "Module not initialized!");
+  auto MD = M->getNamedMetadata(SD_MD_RETUR_VIRTUAL);
+  if (MD == nullptr)
+    return 0;
+
+  auto MetadataVector = dyn_cast<MDTuple>(MD->getOperand(0));
+
   std::string DebugLoc, ClassName, PreciseName, FunctionName;
-  std::string MinStr, MaxStr;
+  unsigned i = 0;
+  while (i < MetadataVector->getNumOperands()) {
+    StringRef Entry = dyn_cast<MDString>(MetadataVector->getOperand(i))->getString();
+    SmallVector<StringRef, 6> Splits;
+    Entry.split(Splits, ",");
+    assert(Splits.size() >= 6);
 
-  int count = 0;
-  while (std::getline(InputFile, InputLine)) {
-    std::stringstream LineStream(InputLine);
+    DebugLoc = Splits[0];
+    ClassName = Splits[1];
+    PreciseName = Splits[2];
+    FunctionName = Splits[3];
+    uint64_t min = std::stoul(Splits[4]);
+    uint64_t max = std::stoul(Splits[5]);
 
-    std::getline(LineStream, DebugLoc, ',');
-    std::getline(LineStream, ClassName, ',');
-    std::getline(LineStream, PreciseName, ',');
-    std::getline(LineStream, FunctionName, ',');
-    std::getline(LineStream, MinStr, ',');
-    LineStream >> MaxStr;
-    uint64_t min = std::stoul(MinStr);
-    uint64_t max = std::stoul(MaxStr);
     CallSiteDebugLocVirtual[DebugLoc] = FunctionName;
     CallSiteRange[DebugLoc] = {min, max};
-    ++count;
+    ++i;
   }
-  sdLog::stream() << "Loaded virtual CallSites: " << count << "\n";
+
+  MD->eraseFromParent();
+  return i;
 }
 
-void SDMachineFunction::loadStaticCallSiteData() {
-  //TODO MATT: delete file
-  std::ifstream InputFile("./SD_CallSitesStatic");
-  std::string InputLine;
+int SDMachineFunction::loadStaticCallSiteData() {
+  assert(M != nullptr && "Module not initialized!");
+  auto MD = M->getNamedMetadata(SD_MD_RETUR_NORMAL);
+  if (MD == nullptr)
+    return 0;
+
+  auto MetadataVector = dyn_cast<MDTuple>(MD->getOperand(0));
+
   std::string DebugLoc, FunctionName, IDString;
 
-  int count = 0;
-  while (std::getline(InputFile, InputLine)) {
-    std::stringstream LineStream(InputLine);
+  unsigned i = 0;
+  while (i < MetadataVector->getNumOperands()) {
+    StringRef Entry = dyn_cast<MDString>(MetadataVector->getOperand(i))->getString();
+    SmallVector<StringRef, 3> Splits;
+    Entry.split(Splits, ",");
+    assert(Splits.size() >= 2);
 
-    std::getline(LineStream, DebugLoc, ',');
-    std::getline(LineStream, FunctionName, ',');
-    LineStream >> IDString;
-    if (IDString != "") {
-      uint64_t ID = std::stoul(IDString);
+    DebugLoc = Splits[0];
+    FunctionName = Splits[1];
+    if (Splits.size() > 2) {
+      uint64_t ID = std::stoul(Splits[2]);
       CallSiteID[DebugLoc] = ID;
     }
+
     CallSiteDebugLocStatic[DebugLoc] = FunctionName;
-    ++count;
+    ++i;
   }
-  sdLog::stream() << "Loaded static CallSites: " << count << "\n";
+
+  MD->eraseFromParent();
+  return i;
 }
 
-void SDMachineFunction::analyse() {
+void SDMachineFunction::analyse(const Module *M) {
   uint64_t sum = 0;
   if (!RangeWidths.empty()) {
     for (uint64_t i : RangeWidths) {
@@ -207,21 +267,17 @@ void SDMachineFunction::analyse() {
     sdLog::stream() << "TOTAL RANGES: " << RangeWidths.size() << "\n";
   }
 
-  int number = 0;
-  std::string outName = ((Twine)("./SD_BackendStats" + std::to_string(number))).str();
-  std::ifstream infile(outName);
-  while(infile.good()) {
-    number++;
-    outName = ((Twine)("./SD_BackendStats" + std::to_string(number))).str();
-    infile = std::ifstream(outName);
-  }
+  if (IDCount.empty())
+    return;
+
+  std::string outName = findOutputFileName(M);
   std::ofstream Outfile(outName);
   std::ostream_iterator <std::string> OutIterator(Outfile, "\n");
   for (auto &entry : IDCount) {
     Outfile << entry.first << "," << entry.second << "\n";
   }
+  Outfile.close();
 }
-
 
 char SDMachineFunction::ID = 0;
 

@@ -15,9 +15,11 @@
 
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/Transforms/IPO/SafeDispatchTools.h"
+#include "llvm/Transforms/IPO/SafeDispatchMD.h"
 
 #include <fstream>
 #include <sstream>
+#include <llvm/Transforms/IPO/SafeDispatchGVMd.h>
 
 using namespace llvm;
 
@@ -148,7 +150,7 @@ void SDReturnRange::processStaticCallSites(Module &M) {
         }
       }
     }
-    sdLog::stream() << F.getName() << " (direct: " << countDirect << ", indirect:"<< countIndirect << ")\n";
+    sdLog::log() << F.getName() << " (direct: " << countDirect << ", indirect:"<< countIndirect << ")\n";
     totalDirect += countDirect;
     totalIndirect += countIndirect;
     countDirect = countIndirect = 0;
@@ -258,8 +260,17 @@ void SDReturnRange::storeCallSites(Module &M) {
     infile = std::ifstream(outName);
   }
 
+  auto &C = M.getContext();
   // Virtual
   {
+    llvm::NamedMDNode *MD = M.getOrInsertNamedMetadata(SD_MD_RETUR_VIRTUAL);
+    std::vector<Metadata*> MetadataVector;
+    for (const auto &Entry : CallSiteDebugLocsVirtual) {
+      MetadataVector.push_back(sd_getMDString(C, Entry));
+    }
+    MD->addOperand(MDTuple::get(C, MetadataVector));
+
+#if false
     std::ofstream Outfile("./SD_CallSitesVirtual");
     std::ostream_iterator<std::string> OutIterator(Outfile, "\n");
     std::copy(CallSiteDebugLocsVirtual.begin(), CallSiteDebugLocsVirtual.end(), OutIterator);
@@ -270,10 +281,19 @@ void SDReturnRange::storeCallSites(Module &M) {
     std::ifstream src("./SD_CallSites-backup", std::ios::binary);
     std::ofstream dst(outName, std::ios::binary);
     dst << src.rdbuf();
+#endif
   }
 
   // Static
   {
+    llvm::NamedMDNode *MD = M.getOrInsertNamedMetadata(SD_MD_RETUR_NORMAL);
+    std::vector<Metadata*> MetadataVector;
+    for (const auto &Entry : CallSiteDebugLocsStatic) {
+      MetadataVector.push_back(sd_getMDString(C, Entry));
+    }
+    MD->addOperand(MDTuple::get(C, MetadataVector));
+
+#if false
     std::ofstream Outfile("./SD_CallSitesStatic");
     std::ostream_iterator<std::string> OutIterator(Outfile, "\n");
     std::copy(CallSiteDebugLocsStatic.begin(), CallSiteDebugLocsStatic.end(), OutIterator);
@@ -285,6 +305,7 @@ void SDReturnRange::storeCallSites(Module &M) {
     std::ifstream src2("./SD_CallSitesStatic", std::ios::binary);
     std::ofstream dst2(outName, std::ios::binary);
     dst2 << src2.rdbuf();
+#endif
   }
 }
 

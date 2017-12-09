@@ -96,7 +96,7 @@ def is_on_zoidberg_dimo():
   return get_hostname() == "zoidberg" and get_username() == "dimo"
 
 def is_on_matt_desktop():
-  return get_hostname() == "mattDesktop" and get_username() == "matt"
+  return get_hostname() == "matt-desktop" and get_username() == "matt"
 
 
 # ----------------------------------------------------------------------
@@ -179,7 +179,7 @@ def read_config():
     clang_config = {
       "LLVM_DIR"            : os.environ["HOME"] + "/thesis/llvm",
       "LLVM_BUILD_DIR"      : os.environ["HOME"] + "/thesis/llvm-build",
-      "LLVM_DEBUG_BUILD_DIR": os.environ["HOME"] + "/thesis/llvm-debug",
+      "LLVM_DEBUG_BUILD_DIR": os.environ["HOME"] + "/thesis/llvm-build-debug",
       "LLVM_ANALYSIS_BUILD_DIR": os.environ["HOME"] + "/thesis/llvm-build-analysis",
       "BINUTILS_BUILD_DIR"  : os.environ["HOME"] + "/thesis/binutils-build",
       "SD_DIR"              : os.environ["HOME"] + "/thesis/llvm/scripts",
@@ -191,11 +191,11 @@ def read_config():
 
   #Debug build?
   if BUILD_TYPE == "DEBUG":
-    LLVM_BUILD_OUTPUT = clang_config["LLVM_DEBUG_BUILD_DIR"] + "/Debug+Asserts"
+    LLVM_BUILD_OUTPUT = clang_config["LLVM_DEBUG_BUILD_DIR"]
   elif BUILD_TYPE == "ANALYSIS":
-    LLVM_BUILD_OUTPUT = clang_config["LLVM_ANALYSIS_BUILD_DIR"] + "/Release"
+    LLVM_BUILD_OUTPUT = clang_config["LLVM_ANALYSIS_BUILD_DIR"] #+ "/Release+Asserts" #if building with ./configure and not with cmake
   else:
-    LLVM_BUILD_OUTPUT = clang_config["LLVM_BUILD_DIR"] + "/Release"
+    LLVM_BUILD_OUTPUT = clang_config["LLVM_BUILD_DIR"]
 
   clang_config.update({
     "LLVM_SCRIPTS_DIR"    : clang_config["LLVM_DIR"] + "/scripts",

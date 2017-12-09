@@ -223,6 +223,7 @@ namespace llvm {
 
       //Paul: builds the class hierachy
       buildClouds(M);
+      std::cerr << "Finished building clouds.\n";
 
       //Paul: print the clouds in tmp/dot; can be viewed with graphviz
       //printClouds("");

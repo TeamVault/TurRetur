@@ -42,7 +42,6 @@ static void createPrintCall(const std::string &FormatString,
                             std::vector<Value *> Args,
                             IRBuilder<> &builder,
                             Module *M) {
-  M->getGlobalVariable()
   GlobalVariable *formatStrGV = builder.CreateGlobalString(FormatString, "SafeDispatchFormatStr");
   ConstantInt *zero = builder.getInt32(0);
   ArrayRef<Value *> indices({zero, zero});
@@ -77,8 +76,10 @@ static std::string findOutputFileName(const Module *M) {
     }
     FileName = (FileName + Twine(number)).str();
   }
+  llvm::SmallString<256> AbsoluteFileName = {FileName};
+  sys::fs::make_absolute(AbsoluteFileName);
 
-  return FileName;
+  return AbsoluteFileName.str().str();
 };
 
 int SDReturnAddress::processFunction(Function &F, ProcessingInfo &Info) {
@@ -300,14 +301,17 @@ int SDReturnAddress::generateRangeChecks(Function &F, std::vector<uint64_t> IDs,
     // Build the fail block (CurrentBlock is the block after the last check failed)
     builder.SetInsertPoint(CurrentBlock);
     CurrentBlock->setName("sd.fail");
-    std::string formatStringFail = F.getName().str() + " virtual ID %d (got %d,%d from %p) -> %d\n";
-    std::vector<Value *> argsFail = {IDValue, minID, width, ReturnAddress, check};
-    //createPrintCall(formatStringFail, argsFail, builder, M);
+    std::string formatString = ".\n";
+    std::vector<Value *> args;
+    //createPrintCall(formatString, args, builder, M);
 
     // Build the fail case TerminatorInst (quit program or continue after backward-edge violation?)
-    builder.CreateBr(SuccessBlock);
     //builder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::trap));
     //builder.CreateUnreachable();
+
+    builder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::donothing));
+    builder.CreateBr(SuccessBlock);
+
 
     count++;
   }
@@ -400,14 +404,17 @@ int SDReturnAddress::generateCompareChecks(Function &F, uint64_t ID, ProcessingI
     // Build the fail block (CurrentBlock is the block after the last check failed)
     builder.SetInsertPoint(CurrentBlock);
     CurrentBlock->setName("sd.fail");
-    std::string formatStringFail = F.getName().str() + " static ID %d (got %d from %p) -> %d\n";
-    std::vector<Value *> argsFail = {IDValue, minID, ReturnAddress, check};
-    //createPrintCall(formatStringFail, argsFail, builder, M);
+
+    std::string formatString = ".\n";
+    std::vector<Value *> args;
+    //createPrintCall(formatString, args, builder, M);
 
     // Build the fail case TerminatorInst (quit program or continue after backward-edge violation?)
-    builder.CreateBr(SuccessBlock);
     //builder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::trap));
     //builder.CreateUnreachable();
+
+    builder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::donothing));
+    builder.CreateBr(SuccessBlock);
 
     count++;
   }
@@ -421,10 +428,11 @@ void SDReturnAddress::storeStatistics(Module &M, int NumberOfTotalChecks,
                      std::vector<ProcessingInfo> &FunctionsMarkedNoReturn,
                      std::vector<ProcessingInfo> &FunctionsMarkedBlackListed) {
 
-  sdLog::stream() << "Store statistics for module: " << M.getName() << "\n";
+
 
   int number = 0;
   std::string outName = findOutputFileName(&M);
+  sdLog::stream() << "Store statistics to file: " << outName << "\n";
   std::ofstream Outfile(outName);
 
   std::ostream_iterator <std::string> OutIterator(Outfile, "\n");

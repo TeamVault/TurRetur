@@ -1578,6 +1578,7 @@ static void AddGoldPlugin(const ToolChain &ToolChain, const ArgList &Args,
   CmdArgs.push_back("-plugin");
   std::string Plugin = ToolChain.getDriver().Dir + "/../lib" CLANG_LIBDIR_SUFFIX "/LLVMgold.so";
   CmdArgs.push_back(Args.MakeArgString(Plugin));
+  llvm::errs() << "clang: Adding LLVMgold: " << Plugin << "\n";
 
   // Try to pass driver level flags relevant to LTO code generation down to
   // the plugin.

@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <llvm/Transforms/IPO/SafeDispatchLogStream.h>
 
 // you have to modify the following 4 files for each additional LLVM pass
 // 1. include/llvm/IPO.h
@@ -68,7 +69,7 @@ namespace {
       //Paul: second get the results from the class hierarchy analysis pass
       cha = &getAnalysis<SDBuildCHA>();
 
-      sd_print("\n P4. Started running the 4th pass (Update indices) ...\n");
+      sdLog::stream() << "P4. Started running the 4th pass (Update indices) ...\n";
 
       //Paul: substitute the old v table index witht the new one
       //Intrinsic::sd_get_vtbl_index -> Intrinsic::sd_subst_vtbl_index
@@ -89,7 +90,7 @@ namespace {
       layoutBuilder->removeOldLayouts(M);    //Paul: remove old layouts
       layoutBuilder->clearAnalysisResults(); //Paul: clear all data structures holding analysis data
 
-      sd_print("\n P4. Finished removing thunks from (Update indices) pass...\n");
+      sdLog::stream() << "P4. Finished removing thunks from (Update indices) pass...\n";
       return true;
     }
 

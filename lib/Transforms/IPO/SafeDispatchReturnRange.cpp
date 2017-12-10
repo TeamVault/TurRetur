@@ -332,6 +332,7 @@ char SDReturnRange::ID = 0;
 
 INITIALIZE_PASS_BEGIN(SDReturnRange, "sdRetRange", "Build return ranges", false, false)
 INITIALIZE_PASS_DEPENDENCY(SDBuildCHA)
+INITIALIZE_PASS_DEPENDENCY(SDReturnAddress)
 INITIALIZE_PASS_END(SDReturnRange, "sdRetRange", "Build return ranges", false, false)
 
 ModulePass *llvm::createSDReturnRangePass() {

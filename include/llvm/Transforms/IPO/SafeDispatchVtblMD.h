@@ -318,7 +318,7 @@ static std::vector<SD_VtableMD> sd_generateSubvtableInfo(clang::CodeGen::CodeGen
     {
       auto component = VTLayout->vtable_component_begin()[end];
       auto kind = component.getKind();
-      const clang::CXXMethodDecl *MD;
+      const clang::CXXMethodDecl *MD = nullptr;
 
       if (kind == clang::VTableComponent::CK_FunctionPointer) {
         MD = component.getFunctionDecl();
@@ -330,8 +330,10 @@ static std::vector<SD_VtableMD> sd_generateSubvtableInfo(clang::CodeGen::CodeGen
       } else {
         break;
       }
-      std::string functionName = sd_getFunctionName(ABI, MD);
-      functions.insert(std::pair<std::string, uint64_t>(sd_getFunctionName(ABI, MD), end - start));
+      if (MD != nullptr) {
+        std::string functionName = sd_getFunctionName(ABI, MD);
+        functions.insert(std::pair<std::string, uint64_t>(sd_getFunctionName(ABI, MD), end - addrPt));
+      }
       //count the number of the end
       end++;
     }

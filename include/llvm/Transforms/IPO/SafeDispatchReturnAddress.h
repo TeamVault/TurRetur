@@ -50,83 +50,14 @@ public:
 
     sdLog::stream() << "Start ID for static functions: " << functionID << "\n";
 
-    // init statistics
-    std::vector<ProcessingInfo> FunctionsMarkedStatic;
-    std::vector<ProcessingInfo> FunctionsMarkedVirtual;
-    std::vector<ProcessingInfo> FunctionsMarkedExternal;
-    std::vector<ProcessingInfo> FunctionsMarkedNoReturn;
-    std::vector<ProcessingInfo> FunctionsMarkedBlackListed;
-
-    int NumberOfTotalChecks = 0;
-    int NumberOfFunctions = 0;
     for (auto &F : M) {
-      ProcessingInfo Info;
-      Info.RangeName = F.getName();
-
-      // do processing
-      int NumberOfChecks = processFunction(F, Info);
-
-      bool InfoValidatesNoChecks = false;
-      switch (Info.Type) {
-        case Static:
-          FunctionsMarkedStatic.push_back(Info);
-          break;
-        case Virtual:
-          FunctionsMarkedVirtual.push_back(Info);
-          break;
-        case BlackListed:
-          FunctionsMarkedBlackListed.push_back(Info);
-          InfoValidatesNoChecks = true;
-          break;
-        case None:
-          llvm_unreachable("Function without Type");
-      }
-
-      for (auto &Entry : Info.Flags) {
-        switch (Entry) {
-          case External:
-            FunctionsMarkedExternal.push_back(Info);
-            InfoValidatesNoChecks = true;
-            break;
-          case NoReturn:
-            FunctionsMarkedNoReturn.push_back(Info);
-            InfoValidatesNoChecks = true;
-            break;
-          case NoCaller:
-            break;
-        }
-      }
-
-      if (NumberOfChecks == 0 && !InfoValidatesNoChecks)
-        sdLog::errs() << "Function: " << Info.RangeName << "has no checks but is not NoReturn or blacklisted!\n";
-
-      NumberOfTotalChecks += NumberOfChecks;
-      NumberOfFunctions++;
+      processFunction(F);
     }
-
-    // print and store statistics
-    sdLog::stream() << sdLog::newLine << "P7b. SDReturnAddress statistics:" << "\n";
-    sdLog::stream() << "Total number of checks: " << NumberOfTotalChecks << "\n";
-    sdLog::stream() << "\n";
-    sdLog::stream() << "Total number of functions: " << NumberOfFunctions << "\n";
-    sdLog::stream() << "Total number of static functions: " << FunctionsMarkedStatic.size() << "\n";
-    sdLog::stream() << "Total number of virtual functions: " << FunctionsMarkedVirtual.size() << "\n";
-    sdLog::stream() << "Total number of blacklisted functions: " << FunctionsMarkedBlackListed.size() << "\n";
-    sdLog::stream() << "\n";
-    sdLog::stream() << "Total number of external functions: " << FunctionsMarkedExternal.size() << "\n";
-    sdLog::stream() << "Total number of functions without return: " << FunctionsMarkedNoReturn.size() << "\n";
-
-    storeStatistics(M, NumberOfTotalChecks,
-                    FunctionsMarkedStatic,
-                    FunctionsMarkedVirtual,
-                    FunctionsMarkedExternal,
-                    FunctionsMarkedNoReturn,
-                    FunctionsMarkedBlackListed);
 
     sdLog::stream() << sdLog::newLine << "P7b. Finished running the SDReturnAddress pass ..." << "\n";
     sdLog::blankLine();
 
-    return NumberOfTotalChecks > 0;
+    return false;
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -143,30 +74,6 @@ public:
   }
 
 private:
-  enum ProcessingInfoFlags {
-    NoCaller, NoReturn, External
-  };
-
-  enum ProcessingInfoType {
-    Static, Virtual, BlackListed, None
-  };
-
-  struct ProcessingInfo {
-    ProcessingInfoType Type = None;
-    std::set<ProcessingInfoFlags> Flags{};
-    std::set<uint64_t> IDs{};
-    std::set<uint64_t> ExtraIDs{};
-    StringRef RangeName;
-
-    void insert(ProcessingInfoFlags Flag){
-      Flags.insert(Flag);
-    }
-
-    bool hasFlag(ProcessingInfoFlags Flag) {
-      return Flags.find(Flag) != Flags.end();
-    }
-  };
-
   SDBuildCHA *CHA = nullptr;
   SDEncoder Encoder;
   std::map<std::string, uint64_t> FunctionIDMap{};
@@ -175,28 +82,15 @@ private:
 
   bool isBlackListedFunction(const Function &F) const;
 
-  bool isStaticFunction(const Function &F, ProcessingInfo Info) const;
+  bool isStaticFunction(const Function &F) const;
 
   bool isVirtualFunction(const Function &F) const;
 
-  int processFunction(Function &F, ProcessingInfo &Info);
+  void processFunction(Function &F);
 
-  int processStaticFunction(Function &F, ProcessingInfo &Info);
+  MDNode *processStaticFunction(Function &F);
 
-  int processVirtualFunction(Function &F, ProcessingInfo &Info);
-
-  int generateRangeChecks(Function &F, std::vector<uint64_t> IDs, ProcessingInfo &Info);
-
-  int generateCompareChecks(Function &F, uint64_t ID, ProcessingInfo &Info);
-
-  void storeFunctionIDMap(Module &M);
-
-  void storeStatistics(Module &M, int NumberOfTotalChecks,
-                       std::vector<ProcessingInfo> &FunctionsMarkedStatic,
-                       std::vector<ProcessingInfo> &FunctionsMarkedVirtual,
-                       std::vector<ProcessingInfo> &FunctionsMarkedNoCaller,
-                       std::vector<ProcessingInfo> &FunctionsMarkedNoReturn,
-                       std::vector<ProcessingInfo> &FunctionsMarkedBlackListed);
+  MDNode *processVirtualFunction(Function &F);
 };
 
 } // End llvm namespace

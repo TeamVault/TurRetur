@@ -216,6 +216,7 @@ ModulePass* createSDMoveBasicBlocksPass();
 ModulePass* createSDSubstModulePass();
 ModulePass* createSDReturnRangePass();
 ModulePass* createSDReturnAddressPass();
+ModulePass* createSDReturnChecksPass();
 
 } // End llvm namespace
 

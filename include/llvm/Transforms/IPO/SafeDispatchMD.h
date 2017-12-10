@@ -27,6 +27,10 @@
  */
 #define SD_MD_CLASSINFO  "sd.class_info."
 
+#define SD_MD_FUNCINFO_VIRTUAL  "sd.func_info.virtual."
+#define SD_MD_FUNCINFO_NORMAL  "sd.func_info.normal."
+#define SD_MD_FUNCINFO_BLACKLIST  "sd.func_info.blacklist."
+
 /**
  * named md used to store the TurRetur CallSite info
  */
